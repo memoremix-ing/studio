@@ -1,19 +1,30 @@
 # studio
 
-Memoremix Studio is a malleable content workspace with isolated app booths.
+Memoremix Studio is a malleable content workspace with isolated performer booths.
 Its Rust CLI and Electrobun desktop app share a Rust application core, linked
 into both the CLI executable and the desktop main process. Keep application
 logic and authorization in that core, independent of the CLI, HTTP, desktop
 bridge and worker-runtime adapters.
 
-The repository contains an initial CLI, desktop shell and one-request runtime
-adapter. Requirements below describe the intended security model; validate
+Use **performer** for a program a remixer creates and runs in a **booth**, and
+**sample** for work shared for others to remix. Use this terminology in GUI
+labels, CLI help and documentation. The desktop application is the Studio app.
+Store performer source bundles under `performers/<UUID>/` in a workspace.
+
+The repository contains a CLI, desktop shell, authenticated localhost GUI,
+Turso persistence, performer templates and a one-request runtime adapter. Requirements below describe the intended security model; validate
 each control in the code and packaged build before relying on it. See
 [README.md](README.md) for current capabilities and implementation limits.
 
+## Dependency installation
+
+Respect configured dependency release-age, integrity and security checks. Do not
+disable or lower them to make an installation succeed; wait for eligible releases
+or choose a compatible version that satisfies the existing policy.
+
 ## Trust boundaries
 
-- Treat workspace files, generated code, imported apps, booth HTML and scripts,
+- Treat workspace files, generated code, imported performers, booth HTML and scripts,
   worker output, model output, and renderer messages as untrusted.
 - The trusted shell manages grants and workspace state. Each booth receives
   only explicitly granted capabilities. Neither a path, a booth name, a
@@ -105,7 +116,7 @@ them rather than claiming the whole desktop app opens no ports.
 
 - Never serve untrusted content as executable HTML, SVG or script at the
   privileged shell origin. Return data as JSON and render plain text with
-  `textContent`. Rich content and runnable apps belong in isolated booth
+  `textContent`. Rich content and runnable performers belong in isolated booth
   contexts. Any sanitizer must have a defined policy and tests.
 - A process taking an old port can install a service worker or leave storage
   and pages listening for sessions. A fresh origin prevents prepared state at
@@ -186,9 +197,13 @@ them rather than claiming the whole desktop app opens no ports.
   and selects connections by webview id without Origin authentication.
   Treat it as attack surface even when studio uses the native bridge.
 - Generate a fresh cryptographically random 32-byte secret per webview for
-  its AES-256-GCM transport. Never enable
+  its AES-256-GCM transport, including sandboxed views: the core requires a
+  valid key even when the privileged transport is disabled. Never enable
   `setWebviewPlaintextHostTransport`. Page scripts can read the page's key;
   transport encryption does not protect a view from its own scripts.
+- On macOS, permit HTTP preview loads with an ATS exception scoped to
+  `localhost` and its subdomains. Keep arbitrary-load exceptions disabled.
+  Apply release plist changes before signing and verify the packaged renderer.
 - Do not infer replay protection or availability from encryption. Other
   clients can attempt connection displacement; verify fallback, cleanup and
   malformed/replayed-message handling against the shipped binary.
@@ -199,6 +214,17 @@ them rather than claiming the whole desktop app opens no ports.
 - `persist:*` partitions keep browser state on disk. Store ordinary preferences
   there, not administrative credentials; use an appropriate protected native
   credential store for secrets that must survive restart.
+
+## Persistence
+
+Use local Turso databases for host metadata and separately scoped Durable Object
+state. Keep database paths, object indexes and SQL connections in the Rust core;
+workers receive only their own bounded data through host-authorized bindings.
+Key object identities by performer, namespace and object name. Imports never carry host
+trust grants or another performer's data. Serialize mutations, validate storage limits
+before commits, and preserve identities and provenance during catalog migrations.
+Treat Turso's experimental multiprocess WAL mode as a version-pinned on-disk
+contract; all CLI and desktop processes must use the same engine and mode.
 
 ## Worker execution and tenant policy
 
@@ -231,7 +257,7 @@ them rather than claiming the whole desktop app opens no ports.
 - Link the trusted studio core into CLI and desktop main processes. Keep
   hostile worker execution outside the privileged main process. A Rust helper
   executable may itself embed workerd, with narrow authenticated/inherited IPC
-  and restricted filesystem/network access. Package it with the app.
+  and restricted filesystem/network access. Package it with the performer.
 - Pin the exact workerd source revision and build configuration. Its Rust
   server and cxx/KJ/V8 integration are Bazel-built internals, not an established
   Cargo embedding contract. The in-process server is a test harness that mocks

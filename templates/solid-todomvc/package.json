@@ -1,0 +1,17 @@
+{
+  "name": "@memoremix/studio-template-solid-todomvc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build.mjs"
+  },
+  "dependencies": {
+    "solid-js": "2.0.0-rc.14",
+    "@solidjs/web": "2.0.0-rc.14"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "@babel/core": "7.29.0",
+    "@solidjs/babel-plugin": "2.0.0-rc.14"
+  }
+}

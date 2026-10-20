@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/solidjs/solid",
+  "tag": "solid-js@2.0.0-rc.15",
+  "commit": "4937f0a2bfddd45a65738c189075aff577530073",
+  "path": "examples/todos",
+  "unchanged_files_sha256": {
+    "src/main.tsx": "b59ad4b8cbaaf3ea6da58edf83f55fd6ad4a3f23a3255623b635af80f875d7a5",
+    "src/app.tsx": "b6ac4a8f19854207665c865debccc707e32e3bb546821069aaf2912c63d27edc",
+    "src/todos.ts": "0de876fdd9d4cbcceefa12ae54428c8de589cae2624484f679d715ed812f8311",
+    "src/filter.ts": "98d847edf4c5148639b7ca50596ba0300bc7765b8961abd518562503de254f02",
+    "src/app.css": "0b909768284d9e7cb7896a6364285b5655ed6e5ae4ff128f0d67779c8fd3e573"
+  },
+  "adaptations": [
+    "api.ts uses the Studio booth request API instead of the localStorage mock and random failures.",
+    "index.html loads the bundled client and stylesheet.",
+    "worker.js and studio.json provide Studio persistence and deployment."
+  ],
+  "runtime": "solid-js and @solidjs/web 2.0.0-rc.14; retained to respect configured dependency release-age policy."
+}

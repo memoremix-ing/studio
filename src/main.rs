@@ -24,8 +24,26 @@ struct Cli {
 enum Command {
     /// Initialize a workspace without changing an existing one.
     Init,
-    /// Author a personal app from the built-in starter.
-    New { name: String },
+    /// Author a personal performer from the built-in starter.
+    New {
+        name: String,
+        #[arg(long, default_value = "hello")]
+        template: String,
+    },
+    /// List bundled performer templates.
+    Templates,
+    /// Serve the shared GUI at an authenticated loopback-only address.
+    Serve {
+        /// Listening port; 0 chooses an available port automatically.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+    },
+    /// Inspect the JSON key/value data of a Durable Object.
+    Object {
+        id: Uuid,
+        namespace: String,
+        name: String,
+    },
     /// Copy another remixer's sample into its own solitary realm.
     Import { source: PathBuf },
     /// List booths and their current revision and realm as JSON.
@@ -69,10 +87,26 @@ fn run(cli: Cli) -> Result<()> {
         let workspace = Workspace::init(cli.workspace)?;
         return print(serde_json::json!({"workspace": workspace.root()}));
     }
+    if matches!(cli.command, Command::Templates) {
+        return print(studio::templates::list());
+    }
     let workspace = Workspace::open(&cli.workspace)?;
     match cli.command {
         Command::Init => unreachable!(),
-        Command::New { name } => print(workspace.create(&name)?),
+        Command::New { name, template } => print(workspace.create_from_template(&name, &template)?),
+        Command::Templates => print(studio::templates::list()),
+        Command::Object {
+            id,
+            namespace,
+            name,
+        } => print(workspace.object_data(id, &namespace, &name)?),
+        Command::Serve { port } => {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let signal = cancelled.clone();
+            ctrlc::set_handler(move || signal.store(true, Ordering::Release))?;
+            tokio::runtime::Runtime::new()?
+                .block_on(studio::server::serve(workspace, port, cancelled))
+        }
         Command::Import { source } => print(workspace.import(source)?),
         Command::List => print(workspace.list()?),
         Command::Review { id } => print(workspace.review(id)?),

@@ -13,7 +13,6 @@ use walkdir::WalkDir;
 const MAX_FILE: u64 = 2 * 1024 * 1024;
 const MAX_BUNDLE: usize = 8 * 1024 * 1024;
 const MAX_FILES: usize = 256;
-const DEFAULT_WORKER: &str = include_str!("../samples/hello/worker.js");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +20,10 @@ pub struct AppManifest {
     pub name: String,
     pub entrypoint: String,
     pub compatibility_date: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub durable_objects: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -80,6 +83,10 @@ struct Catalog {
     version: u32,
     workspace_id: Uuid,
     apps: Vec<App>,
+    // Catalog revocation precedes filesystem cleanup. Retry interrupted cleanup
+    // on opening the workspace; no runtime can recreate a deleted app's state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_deletions: Vec<Uuid>,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +113,7 @@ impl Workspace {
             version: 1,
             workspace_id: Uuid::new_v4(),
             apps: Vec::new(),
+            pending_deletions: Vec::new(),
         })?;
         Ok(workspace)
     }
@@ -115,8 +123,18 @@ impl Workspace {
             root: root.as_ref().canonicalize()?,
         };
         ensure_directory(&workspace.root.join(".studio"))?;
+        {
+            let _lock = workspace.lock()?;
+            if workspace.catalog()?.pending_deletions.is_empty() {
+                return Ok(workspace);
+            }
+        }
+        // Keep the same lock order as worker hydration/commit and deletion.
+        let _runtime =
+            workspace.runtime_lock_cancellable(&std::sync::atomic::AtomicBool::new(false))?;
         let _lock = workspace.lock()?;
-        workspace.catalog()?;
+        let mut catalog = workspace.catalog()?;
+        workspace.finish_deletions(&mut catalog)?;
         Ok(workspace)
     }
 
@@ -134,16 +152,76 @@ impl Workspace {
     }
 
     pub fn create(&self, name: &str) -> Result<App> {
+        self.create_from_template(name, "hello")
+    }
+
+    /// Permanently remove one app and its private Durable Object data. Runtime
+    /// serialization prevents an in-flight worker from restoring deleted data.
+    pub fn delete_app(&self, id: Uuid) -> Result<()> {
+        let _runtime = self.runtime_lock_cancellable(&std::sync::atomic::AtomicBool::new(false))?;
+        let _lock = self.lock()?;
+        let mut catalog = self.catalog()?;
+        if !catalog.pending_deletions.contains(&id) {
+            ensure!(
+                catalog.apps.iter().any(|app| app.id == id),
+                "unknown performer"
+            );
+            // Reject directory substitutions before changing the catalog.
+            self.deletion_paths(id)?;
+            catalog.apps.retain(|app| app.id != id);
+            catalog.pending_deletions.push(id);
+            crate::storage::catalog_delete_app(&self.root, &serde_json::to_string(&catalog)?, id)?;
+        }
+        self.finish_deletions(&mut catalog)
+    }
+
+    fn deletion_paths(&self, id: Uuid) -> Result<Vec<PathBuf>> {
+        ensure_directory(&self.root.join(".studio"))?;
+        let mut paths = Vec::new();
+        for parent in [
+            self.root.join("performers"),
+            self.root.join(".studio/objects"),
+        ] {
+            match fs::symlink_metadata(&parent) {
+                Ok(_) => ensure_directory(&parent)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            }
+            let path = parent.join(id.to_string());
+            match fs::symlink_metadata(&path) {
+                Ok(_) => {
+                    ensure_directory(&path)?;
+                    paths.push(path);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(paths)
+    }
+
+    fn finish_deletions(&self, catalog: &mut Catalog) -> Result<()> {
+        while let Some(id) = catalog.pending_deletions.first().copied() {
+            for path in self.deletion_paths(id)? {
+                // remove_dir_all removes nested symlinks themselves, without
+                // traversing their targets. Parents and roots were checked above.
+                fs::remove_dir_all(&path).with_context(|| format!(
+                    "Performer removed from the catalog, but cleanup of {} failed; reopen the workspace to retry",
+                    path.display()
+                ))?;
+            }
+            catalog.pending_deletions.remove(0);
+            self.save(catalog)?;
+        }
+        Ok(())
+    }
+
+    pub fn create_from_template(&self, name: &str, template: &str) -> Result<App> {
         validate_name(name)?;
-        let manifest = AppManifest {
-            name: name.to_owned(),
-            entrypoint: "worker.js".into(),
-            compatibility_date: "2026-10-19".into(),
-        };
-        let files = BTreeMap::from([
-            ("studio.json".into(), serde_json::to_vec_pretty(&manifest)?),
-            ("worker.js".into(), DEFAULT_WORKER.as_bytes().to_vec()),
-        ]);
+        let mut files = crate::templates::bundle(template)?;
+        let mut manifest = manifest(&files)?;
+        manifest.name = name.to_owned();
+        files.insert("studio.json".into(), serde_json::to_vec_pretty(&manifest)?);
         self.add(name, Origin::Personal, files)
     }
 
@@ -163,14 +241,14 @@ impl Workspace {
             origin,
             reviewed_revision: None,
         };
-        let apps = self.root.join("apps");
-        if !apps.exists() {
-            fs::create_dir(&apps)?;
+        let performers = self.root.join("performers");
+        if !performers.exists() {
+            fs::create_dir(&performers)?;
         }
-        ensure_directory(&apps)?;
-        let staging = tempfile::tempdir_in(&apps)?;
+        ensure_directory(&performers)?;
+        let staging = tempfile::tempdir_in(&performers)?;
         write_bundle(staging.path(), &files)?;
-        let target = apps.join(app.id.to_string());
+        let target = performers.join(app.id.to_string());
         fs::rename(staging.path(), &target)?;
         catalog.apps.push(app.clone());
         if let Err(error) = self.save(&catalog) {
@@ -191,7 +269,7 @@ impl Workspace {
             .apps
             .iter()
             .find(|a| a.id == id)
-            .context("unknown app")?;
+            .context("unknown performer")?;
         self.snapshot_app(app)
     }
 
@@ -204,10 +282,10 @@ impl Workspace {
             .apps
             .iter_mut()
             .find(|a| a.id == id)
-            .context("unknown app")?;
+            .context("unknown performer")?;
         ensure!(
             app.origin == Origin::Imported,
-            "personal apps already use the trusted realm"
+            "personal performers already use the trusted realm"
         );
         let snapshot = self.snapshot_app(app)?;
         ensure!(
@@ -225,7 +303,7 @@ impl Workspace {
             .apps
             .iter_mut()
             .find(|a| a.id == id)
-            .context("unknown app")?;
+            .context("unknown performer")?;
         ensure!(
             app.origin == Origin::Imported,
             "only imported samples have a review grant"
@@ -255,11 +333,11 @@ impl Workspace {
             .apps
             .iter()
             .find(|a| a.id == id)
-            .context("unknown app")?;
+            .context("unknown performer")?;
         let snapshot = self.snapshot_app(app)?;
         ensure!(
             snapshot.revision == expected_revision,
-            "app changed since it was opened; reload before saving"
+            "performer changed since it was opened; reload before saving"
         );
         let old = snapshot.files.get(name).context("unknown module")?;
         ensure!(
@@ -271,7 +349,7 @@ impl Workspace {
             size - old.len() + text.len() <= MAX_BUNDLE,
             "sample exceeds 8 MiB"
         );
-        let path = self.root.join("apps").join(id.to_string()).join(name);
+        let path = self.root.join("performers").join(id.to_string()).join(name);
         let mut output =
             tempfile::NamedTempFile::new_in(path.parent().context("missing module parent")?)?;
         output.write_all(text.as_bytes())?;
@@ -288,7 +366,7 @@ impl Workspace {
             .apps
             .iter()
             .find(|a| a.id == id)
-            .context("unknown app")?;
+            .context("unknown performer")?;
         let selected = self.snapshot_app(app)?;
         if selected.realm != Realm::Trusted {
             return Ok(vec![selected]);
@@ -306,8 +384,8 @@ impl Workspace {
     }
 
     fn snapshot_app(&self, app: &App) -> Result<Snapshot> {
-        ensure_directory(&self.root.join("apps"))?;
-        let files = read_bundle(&self.root.join("apps").join(app.id.to_string()))?;
+        ensure_directory(&self.root.join("performers"))?;
+        let files = read_bundle(&self.root.join("performers").join(app.id.to_string()))?;
         let manifest = manifest(&files)?;
         let revision = revision(&files);
         let trusted =
@@ -343,24 +421,39 @@ impl Workspace {
 
     fn catalog(&self) -> Result<Catalog> {
         let path = self.root.join(".studio/catalog.json");
-        let data = read_file(&path)?;
+        // A legacy file must never silently override the database. Keeping one
+        // after migration is an error, including a symlink or a partial restore.
+        let legacy = fs::symlink_metadata(&path).is_ok();
+        let stored = crate::storage::catalog_read(&self.root)?;
+        ensure!(
+            !(legacy && stored.is_some()),
+            "both legacy catalog and database exist; resolve the duplicate catalog"
+        );
+        let data = match stored {
+            Some(data) => data.into_bytes(),
+            None if legacy => read_file(&path)?,
+            None => anyhow::bail!("Studio catalog is missing"),
+        };
         let catalog: Catalog = serde_json::from_slice(&data).context("invalid Studio catalog")?;
         ensure!(catalog.version == 1, "unsupported Studio catalog version");
         let mut ids = std::collections::HashSet::new();
         ensure!(
             catalog.apps.iter().all(|a| ids.insert(a.id)),
-            "duplicate app identity"
+            "duplicate performer identity"
         );
+        ensure!(
+            catalog.pending_deletions.iter().all(|id| ids.insert(*id)),
+            "invalid pending performer deletion"
+        );
+        if legacy {
+            self.save(&catalog)?;
+            fs::remove_file(path)?;
+        }
         Ok(catalog)
     }
 
     fn save(&self, catalog: &Catalog) -> Result<()> {
-        let mut file = tempfile::NamedTempFile::new_in(self.root.join(".studio"))?;
-        serde_json::to_writer_pretty(&mut file, catalog)?;
-        file.write_all(b"\n")?;
-        file.as_file().sync_all()?;
-        file.persist(self.root.join(".studio/catalog.json"))?;
-        Ok(())
+        crate::storage::catalog_write(&self.root, &serde_json::to_string(catalog)?)
     }
 }
 
@@ -386,7 +479,7 @@ impl Snapshot {
     }
 }
 
-fn manifest(files: &BTreeMap<String, Vec<u8>>) -> Result<AppManifest> {
+pub(crate) fn manifest(files: &BTreeMap<String, Vec<u8>>) -> Result<AppManifest> {
     let data = files
         .get("studio.json")
         .context("sample needs a studio.json manifest")?;
@@ -401,6 +494,32 @@ fn manifest(files: &BTreeMap<String, Vec<u8>>) -> Result<AppManifest> {
         files.contains_key(&manifest.entrypoint),
         "entrypoint is missing from sample"
     );
+    ensure!(
+        manifest.durable_objects.len() <= 8,
+        "at most 8 Durable Object namespaces"
+    );
+    for (binding, class) in &manifest.durable_objects {
+        for identifier in [binding, class] {
+            ensure!(
+                !identifier.is_empty()
+                    && identifier.len() <= 64
+                    && identifier
+                        .bytes()
+                        .enumerate()
+                        .all(|(i, b)| b.is_ascii_alphabetic()
+                            || b == b'_'
+                            || (i > 0 && b.is_ascii_digit())),
+                "Durable Object bindings and classes must be JavaScript identifiers"
+            );
+        }
+    }
+    if let Some(page) = &manifest.page {
+        validate_path(page)?;
+        ensure!(
+            page.ends_with(".html") && files.contains_key(page),
+            "page must name an HTML file in the bundle"
+        );
+    }
     let date = manifest.compatibility_date.as_bytes();
     ensure!(
         date.len() == 10
@@ -418,7 +537,7 @@ fn manifest(files: &BTreeMap<String, Vec<u8>>) -> Result<AppManifest> {
 fn validate_name(name: &str) -> Result<()> {
     ensure!(
         !name.trim().is_empty() && name.len() <= 120 && !name.chars().any(char::is_control),
-        "app name must contain 1–120 bytes without control characters"
+        "performer name must contain 1–120 bytes without control characters"
     );
     Ok(())
 }
@@ -440,7 +559,7 @@ fn validate_path(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn ensure_directory(path: &Path) -> Result<()> {
+pub(crate) fn ensure_directory(path: &Path) -> Result<()> {
     ensure!(
         fs::symlink_metadata(path)?.file_type().is_dir(),
         "{} must be a real directory",
@@ -449,7 +568,7 @@ fn ensure_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_file(path: &Path) -> Result<()> {
+pub(crate) fn ensure_file(path: &Path) -> Result<()> {
     ensure!(
         fs::symlink_metadata(path)?.file_type().is_file(),
         "{} must be a regular file",
@@ -495,7 +614,7 @@ fn read_bundle(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
         ensure!(
             matches!(
                 entry.path().extension().and_then(|e| e.to_str()),
-                Some("js" | "mjs" | "json" | "txt" | "wasm")
+                Some("js" | "mjs" | "json" | "txt" | "wasm" | "html" | "css" | "ts" | "tsx")
             ),
             "unsupported sample file: {name}; use a dedicated source directory"
         );

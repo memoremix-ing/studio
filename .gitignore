@@ -12,4 +12,7 @@
 /tools/runtime/node_modules/
 /.studio/
 /apps/
+/performers/
 .DS_Store
+
+/templates/solid-todomvc/node_modules/

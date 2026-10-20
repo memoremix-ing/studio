@@ -25,4 +25,8 @@ export default {
     win: engine,
   },
   runtime: { exitOnLastWindowClosed: true },
+  scripts: {
+    postWrap: "./scripts/macos-loopback.ts",
+    postPackage: "./scripts/macos-loopback.ts",
+  },
 } satisfies ElectrobunConfig;

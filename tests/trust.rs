@@ -51,7 +51,7 @@ fn review_grants_follow_exact_bytes_and_edits_revoke_membership() {
     assert!(workspace.plan(own.id).unwrap().apps.contains(&shared.id));
     let file = workspace
         .root()
-        .join(format!("apps/{}/worker.js", shared.id));
+        .join(format!("performers/{}/worker.js", shared.id));
     fs::write(
         file,
         "export default { fetch() { return new Response('changed'); } };",
@@ -88,7 +88,9 @@ fn snapshot_keeps_the_reviewed_bytes_when_files_change_later() {
     let app = workspace.create("Immutable snapshot").unwrap();
     let snapshot = workspace.snapshot(app.id).unwrap();
     fs::write(
-        workspace.root().join(format!("apps/{}/worker.js", app.id)),
+        workspace
+            .root()
+            .join(format!("performers/{}/worker.js", app.id)),
         "changed",
     )
     .unwrap();
@@ -112,11 +114,14 @@ fn initialization_preserves_existing_apps_and_rejects_unknown_catalogs() {
             .id,
         app.id
     );
-    fs::write(
-        dir.path().join(".studio/catalog.json"),
-        r#"{"version":99,"workspace_id":"00000000-0000-0000-0000-000000000000","apps":[]}"#,
-    )
-    .unwrap();
+    pollster::block_on(async {
+        let db = turso::Builder::new_local(dir.path().join(".studio/studio.db").to_str().unwrap())
+            .experimental_multiprocess_wal(true)
+            .build()
+            .await
+            .unwrap();
+        db.connect().unwrap().execute("UPDATE studio_state SET value=?1 WHERE key='catalog'", [r#"{"version":99,"workspace_id":"00000000-0000-0000-0000-000000000000","apps":[]}"#]).await.unwrap();
+    });
     assert!(Workspace::open(dir.path()).is_err());
 }
 
@@ -148,12 +153,12 @@ fn imported_symlinks_and_workspace_state_symlinks_are_rejected() {
     symlink("/etc/passwd", source.path().join("leak.txt")).unwrap();
     assert!(workspace.import(source.path()).is_err());
     let app = workspace.create("No symlink escapes").unwrap();
-    let app_dir = dir.path().join(format!("apps/{}", app.id));
+    let app_dir = dir.path().join(format!("performers/{}", app.id));
     fs::remove_file(app_dir.join("worker.js")).unwrap();
     symlink("/etc/passwd", app_dir.join("worker.js")).unwrap();
     assert!(workspace.snapshot(app.id).is_err());
-    fs::remove_file(dir.path().join(".studio/catalog.json")).unwrap();
-    symlink("/etc/passwd", dir.path().join(".studio/catalog.json")).unwrap();
+    fs::remove_file(dir.path().join(".studio/studio.db")).unwrap();
+    symlink("/etc/passwd", dir.path().join(".studio/studio.db")).unwrap();
     assert!(Workspace::open(dir.path()).is_err());
 }
 

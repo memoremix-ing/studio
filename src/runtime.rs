@@ -14,12 +14,12 @@ use mxc_sdk::v1::{
     self, ContainerRequest, Containment, FilesystemPolicy, NetworkAction, NetworkEgressPolicy,
     NetworkIngressPolicy, NetworkPolicy, UiPolicy,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{Realm, Snapshot, Workspace};
 
-const OUTPUT_LIMIT: usize = 128 * 1024;
+const OUTPUT_LIMIT: usize = 256 * 1024;
 const DEADLINE: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Serialize)]
@@ -38,6 +38,34 @@ pub struct RunResult {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    pub response: Option<WorkerResponse>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerRequest {
+    pub path: String,
+    #[serde(default = "get_method")]
+    pub method: String,
+    #[serde(default)]
+    pub body: Option<String>,
+}
+fn get_method() -> String {
+    "GET".into()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Completion {
+    response: WorkerResponse,
+    state: crate::storage::ObjectSnapshot,
 }
 
 impl Workspace {
@@ -56,6 +84,47 @@ impl Workspace {
         request_path: &str,
         cancelled: &AtomicBool,
     ) -> Result<RunResult> {
+        self.request_cancellable(
+            id,
+            workerd,
+            &WorkerRequest {
+                path: request_path.into(),
+                method: "GET".into(),
+                body: None,
+            },
+            None,
+            cancelled,
+        )
+    }
+
+    pub fn request_cancellable(
+        &self,
+        id: Uuid,
+        workerd: &Path,
+        input: &WorkerRequest,
+        expected_revision: Option<&str>,
+        cancelled: &AtomicBool,
+    ) -> Result<RunResult> {
+        ensure!(!cancelled.load(Ordering::Acquire), "request cancelled");
+        let request_path = &input.path;
+        ensure!(
+            ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"].contains(&input.method.as_str()),
+            "unsupported request method"
+        );
+        ensure!(
+            input
+                .body
+                .as_ref()
+                .is_none_or(|body| body.len() <= 32 * 1024),
+            "request body exceeds 32 KiB"
+        );
+        ensure!(
+            !["GET", "HEAD"].contains(&input.method.as_str()) || input.body.is_none(),
+            "GET/HEAD cannot have a body"
+        );
+        // The prototype serializes executions per workspace, including storage
+        // hydration/commit, across both transports and independent CLI processes.
+        let _execution = self.runtime_lock_cancellable(cancelled)?;
         ensure!(!cancelled.load(Ordering::Acquire), "request cancelled");
         ensure!(
             request_path.starts_with('/')
@@ -65,6 +134,19 @@ impl Workspace {
             "request path must start with a single / and contain no control characters"
         );
         let group = self.execution_group(id)?;
+        if let Some(expected) = expected_revision {
+            ensure!(
+                group[0].revision == expected,
+                "performer changed; reopen its preview"
+            );
+        }
+        let namespaces = &group[0].manifest.durable_objects;
+        let objects = self.load_objects(id, namespaces)?;
+        let completion_token = format!(
+            "STUDIO_RESULT_{}{}:",
+            Uuid::new_v4().simple(),
+            Uuid::new_v4().simple()
+        );
         let plan = plan(&group);
         let binary = workerd
             .canonicalize()
@@ -82,7 +164,7 @@ impl Workspace {
                 &snapshot.files,
             )?;
         }
-        let config = configuration(&group, request_path)?;
+        let config = configuration(&group, input, &objects, &completion_token)?;
         fs::write(staging.path().join("run.capnp"), config)?;
         let scratch = tempfile::Builder::new()
             .prefix("studio-scratch-")
@@ -152,11 +234,40 @@ impl Workspace {
             v1::WaitResult::Exited(code) => code,
             v1::WaitResult::TimedOut => bail!("runtime exceeded its deadline"),
         };
+        let mut logs = String::new();
+        let mut completion = None;
+        for line in String::from_utf8_lossy(&stdout).lines() {
+            if let Some(data) = line.strip_prefix(&completion_token) {
+                ensure!(completion.is_none(), "duplicate runtime completion");
+                completion = Some(
+                    serde_json::from_str::<Completion>(data)
+                        .context("invalid runtime completion")?,
+                );
+            } else {
+                logs.push_str(line);
+                logs.push('\n');
+            }
+        }
+        let response = if exit_code == 0 {
+            let completion = completion.context("runtime did not return a completed request")?;
+            ensure!(
+                (100..=599).contains(&completion.response.status)
+                    && completion.response.body.len() <= 65536,
+                "invalid worker response"
+            );
+            self.commit_objects(id, &completion.state, namespaces)?;
+            logs.push_str(&serde_json::to_string(&completion.response)?);
+            logs.push('\n');
+            Some(completion.response)
+        } else {
+            None
+        };
         Ok(RunResult {
             plan,
             exit_code,
-            stdout: String::from_utf8_lossy(&stdout).into(),
+            stdout: logs,
             stderr: String::from_utf8_lossy(&stderr).into(),
+            response,
         })
     }
 }
@@ -256,39 +367,63 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn configuration(group: &[Snapshot], request_path: &str) -> Result<String> {
+fn configuration(
+    group: &[Snapshot],
+    input: &WorkerRequest,
+    state: &crate::storage::ObjectSnapshot,
+    token: &str,
+) -> Result<String> {
     let mut config = String::from(
         "using W = import \"/workerd/workerd.capnp\";\nconst config :W.Config = (services = [\n",
     );
-    for app in group {
-        let mut modules = vec![module(app, &app.manifest.entrypoint)?];
-        for name in app
-            .files
-            .keys()
-            .filter(|name| **name != app.manifest.entrypoint && *name != "studio.json")
-        {
+    for (index, app) in group.iter().enumerate() {
+        let selected = index == 0;
+        ensure!(
+            !app.files.contains_key("__studio_entry.js"),
+            "reserved module name"
+        );
+        let mut modules = if selected {
+            let wrapper = include_str!("worker-wrapper.js").replace(
+                "\"./__STUDIO_ORIGINAL__\"",
+                &quote(&format!("./{}", app.manifest.entrypoint)),
+            );
+            vec![format!(
+                "(name = \"__studio_entry.js\", esModule = {})",
+                quote(&wrapper)
+            )]
+        } else {
+            Vec::new()
+        };
+        modules.push(module(app, &app.manifest.entrypoint)?);
+        for name in app.files.keys().filter(|name| {
+            **name != app.manifest.entrypoint
+                && *name != "studio.json"
+                && matches!(
+                    Path::new(name).extension().and_then(|x| x.to_str()),
+                    Some("js" | "mjs" | "json" | "txt" | "wasm")
+                )
+        }) {
             modules.push(module(app, name)?);
         }
-        config.push_str(&format!("(name = {}, worker = (modules = [{}], compatibilityDate = {}, globalOutbound = \"blocked\")),\n", quote(&app.app.id.to_string()), modules.join(","), quote(&app.manifest.compatibility_date)));
+        let bindings = if selected {
+            format!(
+                ", bindings = [(name = \"STUDIO_STATE\", text = {}), (name = \"STUDIO_NAMESPACES\", text = {})]",
+                quote(&serde_json::to_string(state)?),
+                quote(&serde_json::to_string(&app.manifest.durable_objects)?)
+            )
+        } else {
+            String::new()
+        };
+        config.push_str(&format!("(name = {}, worker = (modules = [{}], compatibilityDate = {}, globalOutbound = \"blocked\"{})),\n", quote(&app.app.id.to_string()), modules.join(","), quote(&app.manifest.compatibility_date), bindings));
     }
-    // No sockets and no inspector. The host controls the only service binding.
+    // Completion authentication belongs only to the host's runner isolate.
+    // Booth logs cannot forge a commit or impersonate a sibling's request.
     let runner = format!(
-        r#"export default {{ async test(_controller, env) {{
-      const response = await env.APP.fetch(new Request({}));
-      const reader = response.body?.getReader();
-      const chunks = []; let size = 0;
-      if (reader) for (;;) {{
-        const {{ value, done }} = await reader.read(); if (done) break;
-        size += value.length; if (size > 65536) throw new Error("Response exceeds 64 KiB");
-        chunks.push(value);
-      }}
-      const bytes = new Uint8Array(size); let offset = 0;
-      for (const chunk of chunks) {{ bytes.set(chunk, offset); offset += chunk.length; }}
-      console.log(JSON.stringify({{status: response.status, body: new TextDecoder().decode(bytes)}}));
-    }} }};"#,
-        quote(&format!("https://booth.invalid{request_path}"))
+        "export default {{ async test(_controller, env) {{ const result = await env.APP.run({}); console.log({} + JSON.stringify(result)); }} }};",
+        serde_json::to_string(input)?,
+        quote(token)
     );
-    config.push_str(&format!("(name = \"studio-request\", worker = (modules = [(name = \"runner.js\", esModule = {})], compatibilityDate = \"2026-10-19\", globalOutbound = \"blocked\", bindings = [(name = \"APP\", service = {})])),\n", quote(&runner), quote(&group[0].app.id.to_string())));
+    config.push_str(&format!("(name = \"studio-request\", worker = (modules = [(name = \"runner.js\", esModule = {})], compatibilityDate = \"2026-10-19\", globalOutbound = \"blocked\", bindings = [(name = \"APP\", service = (name = {}, entrypoint = \"StudioEntrypoint\"))])),\n", quote(&runner), quote(&group[0].app.id.to_string())));
     config.push_str("(name = \"blocked\", worker = (modules = [(name = \"blocked.js\", esModule = \"export default { fetch() { throw new Error('Network access is disabled'); } };\")], compatibilityDate = \"2026-10-19\", globalOutbound = \"internet\")),\n(name = \"internet\", network = (allow = []))\n]);\n");
     Ok(config)
 }

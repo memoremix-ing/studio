@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src http://*.localhost:*; object-src 'none'; base-uri 'none'">
   <title>Memoremix Studio</title>
   <link rel="stylesheet" href="style.css">
   <script src="app.js" defer></script>
@@ -13,9 +13,9 @@
     <div class="brand"><span class="mark">m</span><div>memoremix<span class="brand-sub">STUDIO</span></div></div>
     <div class="workspace-label">YOUR WORKSPACE</div>
     <button id="workspace" class="workspace-button">Choose a folder <span>↗</span></button>
-    <div class="side-heading"><span>APP BOOTHS</span><span id="count">0</span></div>
-    <nav id="apps" aria-label="App booths"></nav>
-    <div class="side-actions"><button id="create">＋ New app</button><button id="import">↙ Import sample</button></div>
+    <div class="side-heading"><span>PERFORMER BOOTHS</span><span id="count">0</span></div>
+    <nav id="apps" aria-label="Performer booths"></nav>
+    <div class="side-actions"><button id="create">＋ New performer</button><button id="import">↙ Import sample</button></div>
     <div class="sidebar-foot"><span class="dot"></span> Local by nature.<br><span class="muted">Make something your own.</span></div>
   </aside>
   <main>
@@ -24,13 +24,14 @@
     <section id="welcome">
       <div class="eyebrow">A LITTLE ROOM TO EXPERIMENT</div>
       <h1>Good things<br>begin with a <em>remix.</em></h1>
-      <p>Start with an app. Change a few lines. See what happens.<br>This is your place to make software feel like you.</p>
-      <button id="welcome-create" class="primary">Create your first app <span>↗</span></button>
-      <div class="welcome-notes"><div><span>01</span><strong>Make it yours</strong><p>Your apps and personal remixes live together.</p></div><div><span>02</span><strong>Try a sample</strong><p>Other remixers' work starts in its own space.</p></div><div><span>03</span><strong>Bring it closer</strong><p>Review a sample before inviting it into your trusted realm.</p></div></div>
+      <p>Start with a performer. Change a few lines. See what happens.<br>This is your place to make software feel like you.</p>
+      <button id="welcome-create" class="primary">Create your first performer <span>↗</span></button>
+      <div class="welcome-notes"><div><span>01</span><strong>Make it yours</strong><p>Your performers and personal remixes live together.</p></div><div><span>02</span><strong>Try a sample</strong><p>Other remixers' work starts in its own space.</p></div><div><span>03</span><strong>Bring it closer</strong><p>Review a sample before inviting it into your trusted realm.</p></div></div>
     </section>
     <section id="booth" hidden>
-      <div class="booth-heading"><div><div class="eyebrow">YOUR APP BOOTH</div><h1 id="app-name"></h1></div><span id="realm" class="badge"></span></div>
+      <div class="booth-heading"><div><div class="eyebrow">YOUR PERFORMER BOOTH</div><h1 id="app-name"></h1></div><span id="realm" class="badge"></span></div>
       <div id="trust-note" class="trust-note"></div>
+      <div class="preview-actions"><button id="preview" class="small">Open performer preview ↗</button><button id="close-preview" class="small" hidden>Close preview</button><button id="delete-app" class="small danger">Delete performer…</button></div><iframe id="app-preview" title="Performer preview" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" hidden></iframe>
       <div class="workbench">
         <section class="panel source-panel">
           <div class="panel-heading"><label for="module">SOURCE</label><select id="module"></select><button id="save" class="small">Save changes</button></div>
@@ -43,7 +44,7 @@
           <input id="request-path" value="/?name=remixer" autocomplete="off" spellcheck="false">
           <button id="run" class="primary">Run request <span>↗</span></button>
           <div class="output-heading">RESPONSE</div>
-          <pre id="output">Your app's response will appear here.</pre>
+          <pre id="output">Your performer's response will appear here.</pre>
           <div class="runtime-note">Requests run locally. Network access is disabled.</div>
         </section>
       </div>
@@ -51,6 +52,8 @@
     </section>
     <footer><span>MEMOREMIX STUDIO</span><span>Small changes. New possibilities.</span></footer>
   </main>
-  <dialog id="new-dialog"><form method="dialog"><div class="eyebrow">YOUR NEXT REMIX</div><h2>A name to start with.</h2><label for="new-name">App name</label><input id="new-name" maxlength="120" required placeholder="My little experiment" autocomplete="off"><div class="dialog-actions"><button value="cancel" formnovalidate>Cancel</button><button value="create" class="primary">Create app ↗</button></div></form></dialog>
+  <dialog id="new-dialog"><form method="dialog"><div class="eyebrow">YOUR NEXT REMIX</div><h2>A name to start with.</h2><label for="new-template">Start from a template</label><select id="new-template"><option value="hello">Hello, remixer</option><option value="solid-todomvc">Solid 2 TodoMVC</option></select><label for="new-name">Performer name</label><input id="new-name" maxlength="120" required placeholder="My little experiment" autocomplete="off"><div class="dialog-actions"><button value="cancel" formnovalidate>Cancel</button><button value="create" class="primary">Create performer ↗</button></div></form></dialog>
+  <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-description"><form method="dialog"><h2 id="delete-title">Delete performer?</h2><p id="delete-description">Permanently delete <strong id="delete-name"></strong>, its source files and all its stored data? This cannot be undone.</p><p id="delete-unsaved" hidden>Unsaved edits will also be discarded.</p><div class="dialog-actions"><button value="cancel" autofocus>Cancel</button><button value="delete" class="danger">Delete performer</button></div></form></dialog>
+<input id="import-files" type="file" webkitdirectory multiple hidden>
 </body>
 </html>

@@ -21,3 +21,6 @@ uuid = { version = "1", features = ["serde"] }
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[features]
+preview-smoke = []

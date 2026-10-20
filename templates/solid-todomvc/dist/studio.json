@@ -1,0 +1,1 @@
+{"name":"Solid TodoMVC","entrypoint":"worker.js","compatibility_date":"2026-10-19","durable_objects":{"TODOS":"TodoList"},"page":"index.html"}
