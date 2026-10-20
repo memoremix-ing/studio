@@ -1,0 +1,15 @@
+/target/
+/.hutch/
+/.cottontail-tmp/
+/desktop/target/
+/desktop/.hutch/
+/desktop/node_modules/
+/desktop/build/
+/desktop/artifacts/
+/desktop/.cache/
+/desktop/.cottontail-tmp/
+/.tools/
+/tools/runtime/node_modules/
+/.studio/
+/apps/
+.DS_Store

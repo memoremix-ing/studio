@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>Memoremix Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <aside>
+    <div class="brand"><span class="mark">m</span><div>memoremix<span class="brand-sub">STUDIO</span></div></div>
+    <div class="workspace-label">YOUR WORKSPACE</div>
+    <button id="workspace" class="workspace-button">Choose a folder <span>↗</span></button>
+    <div class="side-heading"><span>APP BOOTHS</span><span id="count">0</span></div>
+    <nav id="apps" aria-label="App booths"></nav>
+    <div class="side-actions"><button id="create">＋ New app</button><button id="import">↙ Import sample</button></div>
+    <div class="sidebar-foot"><span class="dot"></span> Local by nature.<br><span class="muted">Make something your own.</span></div>
+  </aside>
+  <main>
+    <header><span>THE REMIXER'S WORKBENCH</span><span class="edition">EARLY EXPLORATION · 01</span></header>
+    <div id="message" role="status" aria-live="polite"></div>
+    <section id="welcome">
+      <div class="eyebrow">A LITTLE ROOM TO EXPERIMENT</div>
+      <h1>Good things<br>begin with a <em>remix.</em></h1>
+      <p>Start with an app. Change a few lines. See what happens.<br>This is your place to make software feel like you.</p>
+      <button id="welcome-create" class="primary">Create your first app <span>↗</span></button>
+      <div class="welcome-notes"><div><span>01</span><strong>Make it yours</strong><p>Your apps and personal remixes live together.</p></div><div><span>02</span><strong>Try a sample</strong><p>Other remixers' work starts in its own space.</p></div><div><span>03</span><strong>Bring it closer</strong><p>Review a sample before inviting it into your trusted realm.</p></div></div>
+    </section>
+    <section id="booth" hidden>
+      <div class="booth-heading"><div><div class="eyebrow">YOUR APP BOOTH</div><h1 id="app-name"></h1></div><span id="realm" class="badge"></span></div>
+      <div id="trust-note" class="trust-note"></div>
+      <div class="workbench">
+        <section class="panel source-panel">
+          <div class="panel-heading"><label for="module">SOURCE</label><select id="module"></select><button id="save" class="small">Save changes</button></div>
+          <textarea id="source" aria-label="Module source" spellcheck="false"></textarea>
+          <div class="panel-foot"><span id="revision"></span><span id="edit-status">Saved</span></div>
+        </section>
+        <section class="panel result-panel">
+          <div class="panel-heading"><span>TRY IT OUT</span><span class="request-method">GET</span></div>
+          <label for="request-path" class="field-label">Request path</label>
+          <input id="request-path" value="/?name=remixer" autocomplete="off" spellcheck="false">
+          <button id="run" class="primary">Run request <span>↗</span></button>
+          <div class="output-heading">RESPONSE</div>
+          <pre id="output">Your app's response will appear here.</pre>
+          <div class="runtime-note">Requests run locally. Network access is disabled.</div>
+        </section>
+      </div>
+      <div class="review-bar"><span id="review-note"></span><button id="promote" class="small">Trust this revision</button><button id="demote" class="small">Return to solitary realm</button></div>
+    </section>
+    <footer><span>MEMOREMIX STUDIO</span><span>Small changes. New possibilities.</span></footer>
+  </main>
+  <dialog id="new-dialog"><form method="dialog"><div class="eyebrow">YOUR NEXT REMIX</div><h2>A name to start with.</h2><label for="new-name">App name</label><input id="new-name" maxlength="120" required placeholder="My little experiment" autocomplete="off"><div class="dialog-actions"><button value="cancel" formnovalidate>Cancel</button><button value="create" class="primary">Create app ↗</button></div></form></dialog>
+</body>
+</html>

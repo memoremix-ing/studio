@@ -1,0 +1,7 @@
+{
+  "name": "studio-development-runtime",
+  "private": true,
+  "dependencies": {
+    "workerd": "1.20261019.1"
+  }
+}

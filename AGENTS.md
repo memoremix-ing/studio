@@ -6,8 +6,10 @@ into both the CLI executable and the desktop main process. Keep application
 logic and authorization in that core, independent of the CLI, HTTP, desktop
 bridge and worker-runtime adapters.
 
-These are requirements for implementation, not claims that security controls
-already exist. This workspace currently has no application implementation.
+The repository contains an initial CLI, desktop shell and one-request runtime
+adapter. Requirements below describe the intended security model; validate
+each control in the code and packaged build before relying on it. See
+[README.md](README.md) for current capabilities and implementation limits.
 
 ## Trust boundaries
 
@@ -131,7 +133,9 @@ them rather than claiming the whole desktop app opens no ports.
 
 - Load only packaged, trusted shell assets into a privileged webview. Never
   navigate a bridged shell to remote or booth content. Treat injected shell
-  script as having every capability exposed by its bridge.
+  script as having every capability exposed by its bridge. Set explicit
+  navigation and event callbacks on each view, including a no-op event callback
+  when events are unused.
 - Install an explicit `internal_bridge` handler on every non-sandboxed
   webview. Use a deny/no-op handler when child tags are unnecessary. The
   audited core/SDK defaults accept powerful `webviewTag*` operations; do not

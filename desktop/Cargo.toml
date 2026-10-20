@@ -1,0 +1,23 @@
+[package]
+name = "studio-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+electrobun = { path = ".hutch/devkit/rust-sdk" }
+getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+studio = { package = "memoremix-studio", path = ".." }
+uuid = { version = "1", features = ["serde"] }
+
+[lints.rust]
+unsafe_code = "forbid"
