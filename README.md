@@ -80,7 +80,7 @@ files, 2 MiB per file and 8 MiB total. This prototype accepts prebuilt modules;
 it does not install npm dependencies or transpile TypeScript.
 
 The workspace stores host-managed provenance and review grants in the local
-Turso database `.studio/studio.db`; editable performer files live under
+Turso database `.studio/studio.turso`; editable performer files live under
 `performers/PERFORMER_UUID/`. A complete bundle digest includes module paths, contents and the manifest. Promotion requires
 the exact digest displayed by `review`. Any later edit to an imported sample
 changes its realm until the new revision is reviewed. Execution snapshots the
@@ -157,10 +157,14 @@ execution, not the browser renderer.
 
 Studio uses the embedded Rust Turso engine (`turso = 0.8.3`), with no hosted
 account or network connection required. Workspace metadata and the object
-index live in `.studio/studio.db`. Each object lives in its own database under
-`.studio/objects/PERFORMER_UUID/SHA256_NAMESPACE/SHA256_OBJECT_NAME.db`. Performer identity,
+index live in `.studio/studio.turso`. Each object lives in its own database under
+`.studio/objects/PERFORMER_UUID/SHA256_NAMESPACE/SHA256_OBJECT_NAME.turso`. Performer identity,
 namespace and object name define its scope; worker-supplied paths are never used.
 Keep the `.studio/` directory together when backing up a stopped workspace.
+New workspaces create a `.gitignore` that excludes `.studio/`, `*.turso`
+databases and `*.turso-*` sidecars (including WAL and shared-memory files)
+throughout the workspace. Existing ignore rules are preserved; performer
+source files remain available to version control.
 Existing JSON catalogs migrate on open, preserving identities, provenance and
 review grants; a conflicting JSON catalog and database fail closed.
 

@@ -2,6 +2,39 @@ use std::fs;
 use studio::{Origin, Realm, Workspace};
 
 #[test]
+fn initialization_preserves_custom_ignore_rules_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let ignore = dir.path().join(".gitignore");
+    // No final newline: appended Studio rules still need their own lines.
+    let custom = b"/build/\n!important.turso";
+    fs::write(&ignore, custom).unwrap();
+    let w = Workspace::init(dir.path()).unwrap();
+    let original = fs::read(&ignore).unwrap();
+    assert!(original.starts_with(custom));
+    assert!(dir.path().join(".studio/studio.turso").is_file());
+    assert!(!dir.path().join(".studio/studio.db").exists());
+    w.create("Keep on reinitialization").unwrap();
+    assert_eq!(
+        Workspace::init(dir.path()).unwrap().list().unwrap().len(),
+        1
+    );
+    assert_eq!(fs::read(&ignore).unwrap(), original);
+}
+
+#[cfg(unix)]
+#[test]
+fn initialization_rejects_an_ignore_symlink_without_writing_its_target() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let target = tempfile::NamedTempFile::new().unwrap();
+    fs::write(target.path(), "preserved").unwrap();
+    symlink(target.path(), dir.path().join(".gitignore")).unwrap();
+    assert!(Workspace::init(dir.path()).is_err());
+    assert_eq!(fs::read_to_string(target.path()).unwrap(), "preserved");
+    assert!(!dir.path().join(".studio").exists());
+}
+
+#[test]
 fn catalog_is_in_turso_and_legacy_provenance_survives_migration() {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join(".studio");
@@ -22,7 +55,7 @@ fn catalog_is_in_turso_and_legacy_provenance_survives_migration() {
     fs::write(state.join("catalog.json"),serde_json::json!({"version":1,"workspace_id":uuid::Uuid::new_v4(),"apps":[{"id":app,"name":"Legacy sample","origin":"imported","reviewed_revision":null}]}).to_string()).unwrap();
     let w = Workspace::open(dir.path()).unwrap();
     assert!(!state.join("catalog.json").exists());
-    assert!(state.join("studio.db").exists());
+    assert!(state.join("studio.turso").exists());
     let snap = w.snapshot(app).unwrap();
     assert_eq!(snap.app.origin, Origin::Imported);
     assert_eq!(snap.realm, Realm::Solitary { app_id: app });
@@ -64,7 +97,7 @@ fn database_and_wal_symlinks_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let w = Workspace::init(dir.path()).unwrap();
         drop(w);
-        let path = dir.path().join(format!(".studio/studio.db{suffix}"));
+        let path = dir.path().join(format!(".studio/studio.turso{suffix}"));
         if path.exists() {
             fs::remove_file(&path).unwrap();
         }

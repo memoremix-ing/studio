@@ -1,0 +1,6 @@
+# Studio metadata, trust grants and transient runtime state.
+/.studio/
+
+# Local Turso databases and their sidecars anywhere in the workspace.
+*.turso
+*.turso-*

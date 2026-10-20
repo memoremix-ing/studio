@@ -106,6 +106,20 @@ impl Workspace {
             fs::symlink_metadata(&state).is_err(),
             ".studio must not be a symlink"
         );
+        // Install ignore rules before creating any local database files. Append
+        // to an existing ignore file without replacing the remixer's rules.
+        let ignore = root.join(".gitignore");
+        let existing = match fs::symlink_metadata(&ignore) {
+            Ok(_) => read_file(&ignore)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.into()),
+        };
+        let mut file = OpenOptions::new().create(true).append(true).open(ignore)?;
+        if !existing.is_empty() {
+            file.write_all(b"\n\n")?;
+        }
+        file.write_all(include_bytes!("workspace.gitignore"))?;
+        file.sync_all()?;
         fs::create_dir(&state)?;
         let workspace = Self { root };
         let _lock = workspace.lock()?;

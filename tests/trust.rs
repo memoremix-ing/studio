@@ -115,11 +115,12 @@ fn initialization_preserves_existing_apps_and_rejects_unknown_catalogs() {
         app.id
     );
     pollster::block_on(async {
-        let db = turso::Builder::new_local(dir.path().join(".studio/studio.db").to_str().unwrap())
-            .experimental_multiprocess_wal(true)
-            .build()
-            .await
-            .unwrap();
+        let db =
+            turso::Builder::new_local(dir.path().join(".studio/studio.turso").to_str().unwrap())
+                .experimental_multiprocess_wal(true)
+                .build()
+                .await
+                .unwrap();
         db.connect().unwrap().execute("UPDATE studio_state SET value=?1 WHERE key='catalog'", [r#"{"version":99,"workspace_id":"00000000-0000-0000-0000-000000000000","apps":[]}"#]).await.unwrap();
     });
     assert!(Workspace::open(dir.path()).is_err());
@@ -157,8 +158,8 @@ fn imported_symlinks_and_workspace_state_symlinks_are_rejected() {
     fs::remove_file(app_dir.join("worker.js")).unwrap();
     symlink("/etc/passwd", app_dir.join("worker.js")).unwrap();
     assert!(workspace.snapshot(app.id).is_err());
-    fs::remove_file(dir.path().join(".studio/studio.db")).unwrap();
-    symlink("/etc/passwd", dir.path().join(".studio/studio.db")).unwrap();
+    fs::remove_file(dir.path().join(".studio/studio.turso")).unwrap();
+    symlink("/etc/passwd", dir.path().join(".studio/studio.turso")).unwrap();
     assert!(Workspace::open(dir.path()).is_err());
 }
 

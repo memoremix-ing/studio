@@ -61,14 +61,14 @@ fn write(path: &Path, key: &str, value: &str) -> Result<()> {
 }
 
 pub(crate) fn catalog_read(root: &Path) -> Result<Option<String>> {
-    read(&root.join(".studio/studio.db"), "catalog")
+    read(&root.join(".studio/studio.turso"), "catalog")
 }
 pub(crate) fn catalog_write(root: &Path, value: &str) -> Result<()> {
-    write(&root.join(".studio/studio.db"), "catalog", value)
+    write(&root.join(".studio/studio.turso"), "catalog", value)
 }
 
 pub(crate) fn catalog_delete_app(root: &Path, value: &str, app: Uuid) -> Result<()> {
-    let (_db, mut conn) = database(&root.join(".studio/studio.db"))?;
+    let (_db, mut conn) = database(&root.join(".studio/studio.turso"))?;
     pollster::block_on(async {
         let tx = conn.transaction().await?;
         tx.execute(
@@ -87,7 +87,10 @@ pub(crate) fn catalog_delete_app(root: &Path, value: &str, app: Uuid) -> Result<
 }
 
 fn index(root: &Path, app: Uuid) -> Result<Vec<(String, String)>> {
-    let value = read(&root.join(".studio/studio.db"), &format!("objects/{app}"))?;
+    let value = read(
+        &root.join(".studio/studio.turso"),
+        &format!("objects/{app}"),
+    )?;
     Ok(value
         .map(|v| serde_json::from_str(&v))
         .transpose()?
@@ -108,7 +111,7 @@ fn object_path(root: &Path, app: Uuid, namespace: &str, name: &str) -> Result<Pa
         }
         ensure_directory(&dir)?;
     }
-    Ok(dir.join(format!("{}.db", hex::encode(Sha256::digest(name)))))
+    Ok(dir.join(format!("{}.turso", hex::encode(Sha256::digest(name)))))
 }
 
 fn validate(snapshot: &ObjectSnapshot, namespaces: &BTreeMap<String, String>) -> Result<()> {
@@ -184,7 +187,7 @@ impl Workspace {
             }
         }
         write(
-            &self.root().join(".studio/studio.db"),
+            &self.root().join(".studio/studio.turso"),
             &format!("objects/{app}"),
             &serde_json::to_string(&entries)?,
         )
@@ -315,7 +318,7 @@ mod deletion_tests {
         );
         assert!(
             read(
-                &dir.path().join(".studio/studio.db"),
+                &dir.path().join(".studio/studio.turso"),
                 &format!("objects/{}", deleted.id)
             )
             .unwrap()

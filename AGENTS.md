@@ -218,7 +218,9 @@ them rather than claiming the whole desktop app opens no ports.
 ## Persistence
 
 Use local Turso databases for host metadata and separately scoped Durable Object
-state. Keep database paths, object indexes and SQL connections in the Rust core;
+state. Use the `.turso` extension and exclude databases and their sidecars from
+version control through each new workspace's `.gitignore`, preserving existing
+ignore rules. Keep database paths, object indexes and SQL connections in the Rust core;
 workers receive only their own bounded data through host-authorized bindings.
 Key object identities by performer, namespace and object name. Imports never carry host
 trust grants or another performer's data. Serialize mutations, validate storage limits
